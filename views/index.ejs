@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess.com</title>
+    <script src='https://cdn.tailwindcss.com '></script>
+</head>
+<style>
+    .chessboard {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        grid-template-rows: repeat(8, minmax(0, 1fr));
+        width: 400px;
+        height: 400px;
+        transform: rotate(0deg);
+    }
+
+    .piece.white {
+        color: white;
+        filter: drop-shadow(0 0 2px rgba(0, 0, 0, 1));
+        transition: all 5.5s ease-out;
+    }
+
+    .piece.black {
+        color: black;
+    }
+
+    .flipped {
+        transform: rotate(180deg);
+    }
+
+    .square {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .square.light {
+        background-color: #f0d9b5;
+    }
+
+    .square.dark {
+        background-color: #b58863;
+    }
+
+    .piece {
+        font-size: 55px;
+        cursor: pointer;
+    }
+
+    .piece.draggable {
+        cursor: grab;
+    }
+
+    .dragging {
+        opacity: 0.5;
+    }
+
+    /* Rotate pieces for black player */
+    .flipped .piece {
+        transform: rotate(180deg);
+    }
+
+    #winnerPopup {
+        backdrop-filter: blur(2px);
+        background-color: #64646849;
+    }
+</style>
+
+<body class="overflow-hidden">
+
+    <div class="stopMove w-full h-screen bg-transparent absolute z-30 hidden"></div>
+
+
+    <div id="winnerPopup"
+        class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-80 z-20 w-80 scale-150 flex items-center justify-center bg-gray-300 py-20 px-8 rounded-lg bg-opacity-50 hidden">
+        <div class="bg-white p-3 rounded-lg text-center">
+            <h2 id="winnerMessage" class="text-2xl font-bold mb-4"></h2>
+            <button onclick="closePopup()" class="px-4 py-2 bg-blue-500 text-white rounded">OK</button>
+        </div>
+    </div>
+
+    <div id="turnIndicator"
+        class="text-center mb-4 text-2xl px-20 top-4 left-1/2 -translate-x-1/2 py-4 absolute bg-zinc-900 text-white rounded-md hidden">
+        Your turn</div>
+    <div id="colorTurnIndicator"
+        class="text-center mb-4 text-2xl px-20 top-4 left-1/2 -translate-x-1/2 py-4 absolute bg-zinc-900 text-white rounded-md hidden">
+    </div>
+
+    
+    
+
+
+    <div class="w-full h-screen bg-zinc-800 flex flex-col items-center justify-center">
+        <div class="chessboard h-[600px] w-[600px] aspect-square bg-rose-700"></div>
+        <div class="whoAreYou w-[600px] h-5 "></div>
+        <div class="Captured w-[600px] h-1/6 bg-transparent text-black text-5xl flex gap-1 text-start p-2 flex-wrap"></div>
+
+
+    </div>
+
+    <script src='https://cdn.socket.io/4.7.5/socket.io.min.js'
+        integrity='sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO'
+        crossorigin='anonymous'></script>',
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"
+        integrity="sha512-xRllwz2gdZciIB+AkEbeq+gVhX8VB8XsfqeFbUh+SzHlN96dEduwtTuVuc2u9EROlmW9+yhRlxjif66ORpsgVA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        const socket = io();
+        const chess = new Chess()
+        const boardElement = document.querySelector('.chessboard')
+        let draggedPiece = null;
+        let sourceSquare = null;
+        let playerRole = null;
+
+        const renderBoard = () => {
+
+            const board = chess.board();
+            boardElement.innerHTML = '';
+            board.forEach((row, rowindex) => {
+                row.forEach((square, squareindex) => {
+                
+                    const squareElement = document.createElement('div');
+                    squareElement.classList.add(
+                        'square',
+                        (squareindex + rowindex) % 2 === 0 ? 'light' : 'dark');
+
+                    squareElement.dataset.row = rowindex
+                    squareElement.dataset.col = squareindex
+
+                    if (square) {
+                        const pieceElement = document.createElement('div');
+                        pieceElement.classList.add(
+                            'piece',
+                            square.color === 'w' ? 'white' : 'black'
+                        );
+
+                        pieceElement.innerHTML = getPieceUnicode(square);
+                        pieceElement.draggable = playerRole === square.color;
+
+                        pieceElement.addEventListener('dragstart', (e) => {
+                            if (pieceElement.draggable) {
+                                draggedPiece = pieceElement
+
+                                sourceSquare = { row: rowindex, col: squareindex }
+                                e.dataTransfer.setData('text/plain', "");
+                            }
+                        });
+                        pieceElement.addEventListener('dragend', (e) => {
+                            draggedPiece = null
+                            sourceSquare = null
+                        });
+
+                        squareElement.appendChild(pieceElement)
+                    }
+
+                    squareElement.addEventListener('dragover', (e) => {
+                        e.preventDefault()
+                    })
+
+                    squareElement.addEventListener('drop', (e) => {
+                        e.preventDefault()
+                        if (draggedPiece) {
+                            const targetSquare = {
+                                row: parseInt(squareElement.dataset.row),
+                                col: parseInt(squareElement.dataset.col)
+                            }
+                            handleBoard(sourceSquare, targetSquare)
+                        }
+                    })
+
+                    boardElement.appendChild(squareElement)
+                })
+            })
+
+            if (chess.game_over()) {
+                let how;
+                let win = chess.turn() === 'w' ? 'Black' : 'White';
+                if (chess.in_checkmate()) {
+                    how = "Checkmate"
+                }
+                else if (chess.in_draw()) {
+                    how = "Draw"
+                    win = ""
+                }
+                else if (chess.in_stalemate()) {
+                    how = "Stalemate"
+                }
+                socket.emit('game_over', { win, how })
+            }
+
+
+            if (playerRole === 'b') {
+                boardElement.classList.add('flipped')
+                document.querySelector('.whoAreYou').classList.add('bg-black');
+                if (chess.turn() === 'b') {
+                    document.querySelector('#turnIndicator').classList.remove('hidden');
+                    document.querySelector('#colorTurnIndicator').classList.add('hidden');
+
+                }
+                else {
+                    document.querySelector('#colorTurnIndicator').classList.remove('hidden');
+                    document.querySelector('#colorTurnIndicator').innerHTML = "White's turn ";
+                    // document.querySelector('.whoAreYou').classList.remove('bg-black');
+
+                }
+            }
+            else {
+                boardElement.classList.remove('flipped')
+                document.querySelector('.whoAreYou').classList.add('bg-white');
+                if (chess.turn() === 'w') {
+                    document.querySelector('#turnIndicator').classList.remove('hidden');
+                    document.querySelector('#colorTurnIndicator').classList.add('hidden');
+                }
+                else {
+                    document.querySelector('#colorTurnIndicator').classList.remove('hidden');
+                    document.querySelector('#colorTurnIndicator').innerHTML = "black's turn ";
+                    // document.querySelector('.whoAreYou').classList.remove('bg-white');
+
+                }
+            }
+        };
+
+        let capturedPieces = []
+        const handleBoard = (source, target) => {
+            const move = {
+                from: `${String.fromCharCode(97 + source.col)}${8 - source.row}`,
+                to: `${String.fromCharCode(97 + target.col)}${8 - target.row}`,
+                promotion: "q"
+            }
+            socket.emit("move", move)
+
+        };
+
+        const getPieceUnicode = (piece) => {
+            const unicodePieces = {
+                p: "♙",
+                r: "♜",
+                n: "♞",
+                b: "♝",
+                q: "♛",
+                k: "♚",
+                P: "♙",
+                R: "♜",
+                N: "♞",
+                B: "♝",
+                Q: "♛",
+                K: "♚"
+            };
+
+
+            return unicodePieces[piece.type] || "";
+        };
+        
+        
+
+        function showPopup(message) {
+            const popup = document.getElementById('winnerPopup');
+            const winnerMessage = document.getElementById('winnerMessage');
+            winnerMessage.textContent = message;
+            popup.classList.remove('hidden');
+        }
+
+        function closePopup() {
+            const popup = document.getElementById('winnerPopup');
+            document.querySelector('.stopMove').classList.remove('hidden');
+            popup.classList.add('hidden');
+            socket.emit('close');
+        }
+
+        socket.on('playerRole', (role) => {
+            playerRole = role
+            renderBoard()
+        })
+
+        socket.on('spectatorRole', () => {
+            playerRole = null;
+            renderBoard()
+        })
+
+        socket.on('boardState', (fen) => {
+            chess.load(fen)
+            renderBoard()
+        })
+
+        let piecesObj ={
+                p: "♙",
+                r: "♜",
+                n: "♞",
+                b: "♝",
+                q: "♛",
+                k: "♚",}
+        socket.on('move', (move,cap,capColor) => {
+            chess.move(move)
+            if(cap !== null ){
+                if(capColor === 'w'){
+                    document.querySelector('.Captured').innerHTML+=`<div class="text-black ">${piecesObj[cap]} </div>`
+                }
+                else{
+                    document.querySelector('.Captured').innerHTML+=`    <div class="text-white">${piecesObj[cap]} </div>`
+                }                
+            }
+            renderBoard()
+        })
+        socket.on('game_over', (winner) => {
+            let { win, how } = winner
+            if (win === "") {
+
+                showPopup(`Its a ${how}`)
+            }
+            else {
+
+                showPopup(`${win} wins! by ${how}`)
+            }
+
+        })
+        socket.on('close', () => {
+            chess.reset()
+        })
+
+        socket.on('disconnect', () => {
+            console.log('user disconnected')
+        })
+
+
+        renderBoard()
+
+
+    </script>
+</body>
+
+</html>
